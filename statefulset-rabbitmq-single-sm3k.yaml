@@ -1,0 +1,181 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  creationTimestamp: "2024-02-29T03:37:52Z"
+  generation: 1
+  labels:
+    paas.io/component: single
+    paas.io/instance: rabbitmq
+    paas.io/name: rabbitmq-sm3k
+    paas.io/randName: sm3k
+  name: rabbitmq-single-sm3k
+  namespace: paas
+  resourceVersion: "133233710"
+  uid: 98541be4-9e19-45f2-9b8f-818f4daff1b2
+spec:
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      paas.io/component: single
+      paas.io/instance: rabbitmq
+      paas.io/name: rabbitmq-sm3k
+      paas.io/randName: sm3k
+  serviceName: rabbitmq-headless-sm3k
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        paas.io/component: single
+        paas.io/instance: rabbitmq
+        paas.io/name: rabbitmq-sm3k
+        paas.io/randName: sm3k
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    paas.io/component: single
+                    paas.io/instance: rabbitmq
+                    paas.io/name: rabbitmq-sm3k
+                    paas.io/randName: sm3k
+                namespaces:
+                  - paas
+                topologyKey: kubernetes.io/hostname
+              weight: 1
+      containers:
+        - args:
+            - /opt/bitnami/scripts/rabbitmq/entrypoint.sh /opt/bitnami/scripts/rabbitmq/run.sh
+          command:
+            - /bin/bash
+            - -c
+          env:
+            - name: RABBITMQ_USE_LONGNAME
+              value: "true"
+            - name: RABBITMQ_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  key: rabbitmq-user
+                  name: rabbitmq-sm3k
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: rabbitmq-password
+                  name: rabbitmq-sm3k
+            - name: BITNAMI_DEBUG
+              value: "false"
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
+            - name: RABBITMQ_NODE_NAME
+              value: rabbit@$(MY_POD_NAME).rabbitmq-headless-sm3k.$(MY_POD_NAMESPACE).svc.cluster.local
+          image: reg.caiwu.corp/basic/rabbitmq:3.8.35
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            successThreshold: 1
+            tcpSocket:
+              port: amqp
+            timeoutSeconds: 6
+          name: rabbitmq-single
+          ports:
+            - containerPort: 5672
+              name: amqp
+              protocol: TCP
+            - containerPort: 15672
+              name: manager
+              protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            successThreshold: 1
+            tcpSocket:
+              port: amqp
+            timeoutSeconds: 6
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /bitnami/rabbitmq/mnesia
+              name: rabbitmq-data
+        - command:
+            - /bin/bash
+            - -c
+            - rabbitmq_exporter
+          image: reg.caiwu.corp/basic/rabbitmq-exporter:0.29.0-debian-10-r71
+          imagePullPolicy: IfNotPresent
+          name: metrics
+          ports:
+            - containerPort: 9099
+              name: metrics
+              protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      # securityContext:
+      #   fsGroup: 1001
+      serviceAccount: rabbitmq-sm3k
+      serviceAccountName: rabbitmq-sm3k
+      terminationGracePeriodSeconds: 30
+  updateStrategy:
+    rollingUpdate:
+      partition: 0
+    type: RollingUpdate
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        creationTimestamp: null
+        labels:
+          paas.io/component: single
+          paas.io/instance: rabbitmq
+          paas.io/name: rabbitmq-sm3k
+          paas.io/randName: sm3k
+        name: rabbitmq-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 120Gi
+        storageClassName: gluster-heketi
+        volumeMode: Filesystem
+      status:
+        phase: Pending
+status:
+  availableReplicas: 1
+  collisionCount: 0
+  currentReplicas: 1
+  currentRevision: rabbitmq-single-sm3k-b9997cffb
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  updateRevision: rabbitmq-single-sm3k-b9997cffb
+  updatedReplicas: 1

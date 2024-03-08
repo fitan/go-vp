@@ -1,0 +1,67 @@
+{
+  "name": "mytest",
+  "displayName": "mytest",
+  "description": "",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/go.mod"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "mytest",
+      "properties": {
+        "mytest.noteHighBrightColor": {
+          "type": "string",
+          "default": "rgba(213, 235, 225, 0.7)",
+          "description": "The color of the note's high brightness"
+        },
+        "mytest.noteHigTriggerInterval": {
+          "type": "number",
+          "default": 1000,
+          "description": "The interval of the note's high brightness"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "mytest.goGenerate",
+        "title": "run go generate"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mytest.goGenerate",
+        "key": "ctrl+alt+g",
+        "mac": "cmd+alt+g",
+        "when": "editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.86.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@typescript-eslint/eslint-plugin": "^6.19.1",
+    "@typescript-eslint/parser": "^6.19.1",
+    "eslint": "^8.56.0",
+    "typescript": "^5.3.3",
+    "@vscode/test-cli": "^0.0.4",
+    "@vscode/test-electron": "^2.3.9"
+  }
+}
