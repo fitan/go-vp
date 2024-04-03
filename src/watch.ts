@@ -10,7 +10,7 @@ const wordPattern = /(-?\d*\.\d\w*)|([^\`\~\!\@\#\%\^\&\*\(\)\-\=\+\[\{\]\}\\\|\
 
 
 interface FileInfo {
-    Symbol: vscode.SymbolInformation[];
+    Symbol: vscode.DocumentSymbol[];
     PackageName: string;
     Imports: string[];
     PathDir: string;
@@ -48,7 +48,7 @@ export class SymbolInfo {
     }
 
     async setSymbol(uri: vscode.Uri) {
-        let symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+        let symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
             'vscode.executeDocumentSymbolProvider',
             uri
         );
@@ -154,7 +154,7 @@ export class SymbolInfo {
         return res;
     }
 
-    getSymbolByPkgNameAndName(pkgName: string, name: string): vscode.SymbolInformation | undefined {
+    getSymbolByPkgNameAndName(pkgName: string, name: string): { uri: vscode.Uri | undefined; symbol: vscode.DocumentSymbol | undefined } {
         let indexs = this.index.get(`packageName#${pkgName}`);
         if (indexs) {
             for (let uri of indexs) {
@@ -162,12 +162,13 @@ export class SymbolInfo {
                 if (fileInfo) {
                     for (let symbol of fileInfo.Symbol) {
                         if (symbol.name === name) {
-                            return symbol;
+                            return { uri, symbol };
                         }
                     }
                 }
             }
         }
+        return { uri: undefined, symbol: undefined };
     }
 
 
@@ -186,8 +187,8 @@ export class SymbolInfo {
         return res;
     }
 
-    getSymbolBySourceUriAndName(uri: vscode.Uri, name: string): vscode.SymbolInformation | undefined {
-        let s: vscode.SymbolInformation | undefined = undefined;
+    getSymbolBySourceUriAndName(uri: vscode.Uri, name: string): vscode.DocumentSymbol | undefined {
+        let s: vscode.DocumentSymbol | undefined = undefined;
         this.index.get(`pathDir#${path.dirname(uri.fsPath)}`)?.forEach((uri) => {
             let fileInfo = this.symbolsMap.get(uri);
             if (fileInfo) {
@@ -220,15 +221,17 @@ export class SymbolInfo {
                 provideDefinition(document, position, token) {
                     let word = document.getText(document.getWordRangeAtPosition(position, wordPattern));
                     word = word.includes('(') ? word.replace(trimBracketsRegex, '') : word;
-                    let symbol: vscode.SymbolInformation | undefined = undefined;
+                    let symbol: vscode.DocumentSymbol | undefined = undefined;
+                    let uri: vscode.Uri | undefined = undefined;
                     if (word.includes('.')) {
                         let wordSplit = word.split('.');
-                        symbol = that.getSymbolByPkgNameAndName(wordSplit[0], wordSplit[1]);
+                        ({ uri, symbol } = that.getSymbolByPkgNameAndName(wordSplit[0], wordSplit[1]));
                     } else {
                         symbol = that.getSymbolBySourceUriAndName(document.uri, word);
+                        uri = document.uri;
                     }
 
-                    if (symbol) {
+                    if (symbol && uri) {
                         // return vscode.workspace.openTextDocument(symbol.location.uri).then((doc) => {
                         //     let lastLine = doc.lineCount - 1;
                         //     let lastLineMaxCharacter = document.lineAt(lastLine).text.length; // 获取最后一行的字符数
@@ -236,7 +239,7 @@ export class SymbolInfo {
                         //     let maxRange = new vscode.Range(symbol.location.range.start, maxPosition); // 创建一个新的 Range
                         //     return new vscode.Location(symbol.location.uri, maxRange);
                         // });
-                        return new vscode.Location(symbol.location.uri, symbol.location.range);
+                        return new vscode.Location(uri, symbol.range);
                     } else {
                         return null;
                     }
@@ -438,12 +441,12 @@ export class SymbolInfo {
                             }
                             let symbols = fileInfo.Symbol;
                             let symbol = symbols.find((symbol) => {
-                                return symbol.location.range.contains(position);
+                                return symbol.range.contains(position);
                             });
                             if (!symbol) {
                                 return undefined;
                             }
-                            let startLine = symbol.location.range.start.line;
+                            let startLine = symbol.range.start.line;
                             let gqDoc = "";
                             while (startLine >= 0) {
                                 startLine--;
@@ -473,15 +476,15 @@ export class SymbolInfo {
                             }
 
                             let targetSymbol = that.getSymbolByPkgNameAndName(pkgName, symbolName);
-                            if (!targetSymbol) {
+                            if (!(targetSymbol.uri && targetSymbol.symbol)) {
                                 return undefined;
                             }
 
 
-                            let targetDocument = await vscode.workspace.openTextDocument(targetSymbol.location.uri);
+                            let targetDocument = await vscode.workspace.openTextDocument(targetSymbol.uri);
                             let items: vscode.CompletionItem[] = [];
 
-                            targetSymbol.children?.forEach((child: vscode.DocumentSymbol) => {
+                            targetSymbol.symbol.children?.forEach((child: vscode.DocumentSymbol) => {
                                 let tags = targetDocument.getText(child.range);
                                 if (tags.includes('gorm:"column:')) {
                                     let match = tags.match(/gorm:"column:([^;]+);/);
