@@ -3,12 +3,15 @@
 import * as vscode from 'vscode';
 import { SymbolInfo } from './watch';
 import { goGenerate } from './command';
+import { automaticComplement } from './automaticComplement';
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
 
 	goGenerate(context);
+	// 不好使
+	automaticComplement(context);
 
 
 	let sInfo = new SymbolInfo;
@@ -23,6 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 		sInfo.watch(context);
 		sInfo.definitionProvider(context);
+		sInfo.gqAutomaticComplement(context);
 	});;
 
 

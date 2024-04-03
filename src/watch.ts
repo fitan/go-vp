@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { workerData } from 'worker_threads';
+import { start } from 'repl';
 
 const trimBracketsRegex = /\(.+?\)$/g;
 
@@ -228,6 +229,13 @@ export class SymbolInfo {
                     }
 
                     if (symbol) {
+                        // return vscode.workspace.openTextDocument(symbol.location.uri).then((doc) => {
+                        //     let lastLine = doc.lineCount - 1;
+                        //     let lastLineMaxCharacter = document.lineAt(lastLine).text.length; // 获取最后一行的字符数
+                        //     let maxPosition = new vscode.Position(lastLine, lastLineMaxCharacter); // 创建一个新的 Position
+                        //     let maxRange = new vscode.Range(symbol.location.range.start, maxPosition); // 创建一个新的 Range
+                        //     return new vscode.Location(symbol.location.uri, maxRange);
+                        // });
                         return new vscode.Location(symbol.location.uri, symbol.location.range);
                     } else {
                         return null;
@@ -272,7 +280,7 @@ export class SymbolInfo {
                     }
                 }
             }, wait);
-            context.debounceArgsMap(uri.fsPath, timeout);
+            context.debounceArgsMap.set(uri.fsPath, timeout);
         };
 
     };
@@ -283,13 +291,11 @@ export class SymbolInfo {
         const doc = editor.document;
         const comments = text.match(/\/\/ .*/g);
         let wordNumMap: Map<string, number> = new Map();
+
         if (comments) {
             comments.forEach((comment) => {
                 wordNumMap.set(comment, 0);
             });
-        }
-
-        if (comments) {
             let words: string[] = comments.map((comment) => {
                 return comment.slice(2).split(/\s+/).filter((word) => /^[a-zA-Z].*[a-zA-Z)]$/.test(word));
             }).reduce((prev, curr) => {
@@ -302,7 +308,7 @@ export class SymbolInfo {
                 }));
             }, []);
             words = [...new Set(words)];
-            console.log("words", words);
+            console.log("words: ", words);
             let localWords: string[] = [];
             let pkgWords: Map<string, string[]> = new Map();
             words.forEach((word) => {
@@ -323,7 +329,11 @@ export class SymbolInfo {
 
             let checkedWords = checkedLocalWords.concat(checkedPkgWords);
 
-            console.log("checkedWords", checkedWords);
+            if (!checkedWords.length) {
+                return;
+            }
+
+            // console.log("checkedWords", checkedWords);
 
             const lineRegex = new RegExp(`\\/\\/ .*`, 'g');
 
@@ -332,10 +342,13 @@ export class SymbolInfo {
 
             let decorations: vscode.DecorationOptions[] = [];
             let lineMatch;
+            // console.log("wordRegex: ", `\\b(${checkedWords.join("|")})\\b`);
             while (lineMatch = lineRegex.exec(text)) {
                 let wordMatch;
+                let index = 0;
                 while (wordMatch = wordRegex.exec(lineMatch[0])) {
-                    console.log("wordMatch", wordMatch);
+                    index += 1;
+                    // console.log("wordMatch", index, wordMatch, lineMatch[0], lineMatch);
                     // let start = lineMatch.index + lineMatch[0].indexOf(wordMatch[1]);
                     let start = lineMatch.index + wordMatch.index;
                     let end = start + wordMatch[1].length;
@@ -346,6 +359,7 @@ export class SymbolInfo {
                         // hoverMessage: 'I am a hover!'
                     });
                 };
+                wordRegex.lastIndex = 0;
             };
 
             const hoverDecorationType = vscode.window.createTextEditorDecorationType({
@@ -409,5 +423,79 @@ export class SymbolInfo {
 
 
         context.subscriptions.push(watcher);
+    }
+
+    gqAutomaticComplement(context: vscode.ExtensionContext) {
+        let that = this;
+        context.subscriptions.push(
+            vscode.languages.registerCompletionItemProvider(
+                { pattern: "**/*.go" },
+                {
+                    provideCompletionItems(document: vscode.TextDocument, position: vscode.Position) {
+                        return that.getDocumentSymbols(document.uri).then(async (fileInfo) => {
+                            if (!fileInfo) {
+                                return undefined;
+                            }
+                            let symbols = fileInfo.Symbol;
+                            let symbol = symbols.find((symbol) => {
+                                return symbol.location.range.contains(position);
+                            });
+                            if (!symbol) {
+                                return undefined;
+                            }
+                            let startLine = symbol.location.range.start.line;
+                            let gqDoc = "";
+                            while (startLine >= 0) {
+                                startLine--;
+                                const line = document.lineAt(startLine);
+                                const text = line.text.trim();
+
+                                if (text.startsWith('// ')) {
+                                    if (text.startsWith('// @gq ')) {
+                                        gqDoc = text.slice('// @gq '.length);
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (!gqDoc) {
+                                return undefined;
+                            }
+                            let pkgName = "";
+                            let symbolName = "";
+                            if (gqDoc.includes('.')) {
+                                let gqDocSplit = gqDoc.split('.');
+                                pkgName = gqDocSplit[0];
+                                symbolName = gqDocSplit[1];
+                            } else {
+                                pkgName = fileInfo.PackageName;
+                                symbolName = gqDoc;
+                            }
+
+                            let targetSymbol = that.getSymbolByPkgNameAndName(pkgName, symbolName);
+                            if (!targetSymbol) {
+                                return undefined;
+                            }
+
+
+                            let targetDocument = await vscode.workspace.openTextDocument(targetSymbol.location.uri);
+                            let items: vscode.CompletionItem[] = [];
+
+                            targetSymbol.children?.forEach((child: vscode.DocumentSymbol) => {
+                                let tags = targetDocument.getText(child.range);
+                                if (tags.includes('gorm:"column:')) {
+                                    let match = tags.match(/gorm:"column:([^;]+);/);
+                                    if (match && match[1]) {
+                                        items.push(new vscode.CompletionItem(match[1], vscode.CompletionItemKind.Field));
+                                    }
+                                }
+                            });
+
+                            return items;
+                        });
+                    }
+                },
+                "// @gq-column ",
+            ));
     }
 }
