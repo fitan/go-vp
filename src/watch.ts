@@ -14,6 +14,7 @@ interface FileInfo {
     PackageName: string;
     Imports: string[];
     PathDir: string;
+    Uri: vscode.Uri;
 }
 
 
@@ -23,8 +24,8 @@ export class SymbolInfo {
     }
 
     moduleName: string = '';
-    symbolsMap: Map<vscode.Uri, FileInfo> = new Map();
-    DecorationsMap: Map<vscode.Uri, vscode.TextEditorDecorationType> = new Map();
+    symbolsMap: Map<string, FileInfo> = new Map();
+    DecorationsMap: Map<string, vscode.TextEditorDecorationType> = new Map();
     debounceHighlightComments: Function = this.debounceHC(this.highlightComments, vscode.workspace.getConfiguration('mytest').get('noteHigTriggerInterval') as number);
     debounceSetSymbol: Function = this.debounceSS(this.setSymbol, vscode.workspace.getConfiguration('mytest').get('noteHigTriggerInterval') as number);
     debounceArgsMap: Map<string, NodeJS.Timeout> = new Map();
@@ -44,7 +45,7 @@ export class SymbolInfo {
     }
 
     async getDocumentSymbols(uri: vscode.Uri): Promise<FileInfo | undefined> {
-        return this.symbolsMap.get(uri);
+        return this.symbolsMap.get(uri.toString());
     }
 
     async setSymbol(uri: vscode.Uri) {
@@ -57,16 +58,17 @@ export class SymbolInfo {
             Symbol: symbols || [],
             PackageName: await this.getPackageName(uri),
             Imports: this.getAndCheckImports(uri),
-            PathDir: path.dirname(uri.fsPath)
+            PathDir: path.dirname(uri.fsPath),
+            Uri: uri
         };
 
-        this.symbolsMap.set(uri, info);
+        this.symbolsMap.set(uri.toString(), info);
         this.index.get(`packageName#${info.PackageName}`)?.add(uri) || this.index.set(`packageName#${info.PackageName}`, new Set([uri]));
         this.index.get(`pathDir#${info.PathDir}`)?.add(uri) || this.index.set(`pathDir#${info.PathDir}`, new Set([uri]));
     }
 
     async delSymbol(uri: vscode.Uri) {
-        this.symbolsMap.delete(uri);
+        this.symbolsMap.delete(uri.toString());
     }
 
     getAndCheckImports(uri: vscode.Uri): string[] {
@@ -99,7 +101,7 @@ export class SymbolInfo {
 
         // 判断 import 是否属于当前项目
         // const projectImports = imports.filter(imp => imp.startsWith(moduleName));
-        // console.log('Project specific imports:', projectImports);
+        ////  console.log('Project specific imports:', projectImports);
     }
 
     async getPackageName(uri: vscode.Uri) {
@@ -142,7 +144,7 @@ export class SymbolInfo {
     checkWordEqSymbolByPkgNameAndWords(pkgName: string, words: string[]): string[] {
         let res: string[] = [];
         this.index.get(`packageName#${pkgName}`)?.forEach((uri) => {
-            let fileInfo = this.symbolsMap.get(uri);
+            let fileInfo = this.symbolsMap.get(uri.toString());
             if (fileInfo) {
                 fileInfo.Symbol.forEach((symbol) => {
                     if (words.includes(symbol.name)) {
@@ -158,7 +160,7 @@ export class SymbolInfo {
         let indexs = this.index.get(`packageName#${pkgName}`);
         if (indexs) {
             for (let uri of indexs) {
-                let fileInfo = this.symbolsMap.get(uri);
+                let fileInfo = this.symbolsMap.get(uri.toString());
                 if (fileInfo) {
                     for (let symbol of fileInfo.Symbol) {
                         if (symbol.name === name) {
@@ -175,7 +177,7 @@ export class SymbolInfo {
     checkWordEqSymbolNameByUriAndWords(uri: vscode.Uri, words: string[]): string[] {
         let res: string[] = [];
         this.index.get(`pathDir#${path.dirname(uri.fsPath)}`)?.forEach((uri) => {
-            let fileInfo = this.symbolsMap.get(uri);
+            let fileInfo = this.symbolsMap.get(uri.toString());
             if (fileInfo) {
                 fileInfo.Symbol.forEach((symbol) => {
                     if (words.includes(symbol.name)) {
@@ -187,26 +189,32 @@ export class SymbolInfo {
         return res;
     }
 
-    getSymbolBySourceUriAndName(uri: vscode.Uri, name: string): vscode.DocumentSymbol | undefined {
+    getSymbolBySourceUriAndName(uri: vscode.Uri, name: string): { uri: vscode.Uri | undefined; symbol: vscode.DocumentSymbol | undefined } {
+        let u: vscode.Uri | undefined = undefined;
         let s: vscode.DocumentSymbol | undefined = undefined;
+        //         console.log("getSymbolBySourceUriAndName", uri.fsPath, name, path.dirname(uri.fsPath));
         this.index.get(`pathDir#${path.dirname(uri.fsPath)}`)?.forEach((uri) => {
-            let fileInfo = this.symbolsMap.get(uri);
+            let fileInfo = this.symbolsMap.get(uri.toString());
             if (fileInfo) {
                 fileInfo.Symbol.find((symbol) => {
                     if (symbol.name === name) {
+                        u = uri;
                         s = symbol;
+                        return true;
                     }
                 });
             }
         });
-        return s;
+
+        //         console.log("getSymbolBySourceUriAndName", u, s);
+        return { uri: u, symbol: s };
     }
 
     getEqDirUrisByUri(uri: vscode.Uri): vscode.Uri[] {
         let uris: vscode.Uri[] = [];
         for (let [key, value] of this.symbolsMap) {
-            if (path.dirname(key.fsPath) === path.dirname(uri.fsPath)) {
-                uris.push(key);
+            if (path.dirname(value.Uri.fsPath) === path.dirname(uri.fsPath)) {
+                uris.push(value.Uri);
             }
         }
         return uris;
@@ -219,7 +227,14 @@ export class SymbolInfo {
             { scheme: 'file', language: 'go' },
             {
                 provideDefinition(document, position, token) {
+                    let line = document.lineAt(position.line).text;
                     let word = document.getText(document.getWordRangeAtPosition(position, wordPattern));
+
+                    if (line.includes('@gq-column') || line.includes('@gq-sub') || line.includes('@gq-struct')) {
+                        //                         console.log("findGqColumn", document.uri, position, word);
+                        return that.findGqColumn(document, position, word);
+                    }
+
                     word = word.includes('(') ? word.replace(trimBracketsRegex, '') : word;
                     let symbol: vscode.DocumentSymbol | undefined = undefined;
                     let uri: vscode.Uri | undefined = undefined;
@@ -227,8 +242,7 @@ export class SymbolInfo {
                         let wordSplit = word.split('.');
                         ({ uri, symbol } = that.getSymbolByPkgNameAndName(wordSplit[0], wordSplit[1]));
                     } else {
-                        symbol = that.getSymbolBySourceUriAndName(document.uri, word);
-                        uri = document.uri;
+                        ({ uri, symbol } = that.getSymbolBySourceUriAndName(document.uri, word));
                     }
 
                     if (symbol && uri) {
@@ -288,17 +302,41 @@ export class SymbolInfo {
 
     };
 
+    getDocLineNumByIndex(docIndex: number, doc: vscode.TextDocument): number {
+        let index = 0;
+        for (let i = 0; i < doc.lineCount; i++) {
+            let line = doc.lineAt(i);
+            if (index + line.text.length >= docIndex) {
+                return i;
+            }
+
+            index += line.text.length;
+        }
+        return 0;
+    }
+
     async highlightComments(editor: vscode.TextEditor) {
         const uri = editor.document.uri;
         const text = editor.document.getText();
         const doc = editor.document;
         const comments = text.match(/\/\/ .*/g);
-        let wordNumMap: Map<string, number> = new Map();
+        let fieldComments: string[] = [];
+        comments?.forEach((comment) => {
+            if (comment.includes('@gq-column')) {
+                fieldComments.push(comment);
+            }
+            if (comment.includes('@gq-sub')) {
+                fieldComments.push(comment);
+            }
+            if (comment.includes('@gq-struct')) {
+                fieldComments.push(comment);
+            }
+        });
+
+        let decorations: vscode.DecorationOptions[] = [];
+        let checkedWords: string[] = [];
 
         if (comments) {
-            comments.forEach((comment) => {
-                wordNumMap.set(comment, 0);
-            });
             let words: string[] = comments.map((comment) => {
                 return comment.slice(2).split(/\s+/).filter((word) => /^[a-zA-Z].*[a-zA-Z)]$/.test(word));
             }).reduce((prev, curr) => {
@@ -311,7 +349,7 @@ export class SymbolInfo {
                 }));
             }, []);
             words = [...new Set(words)];
-            console.log("words: ", words);
+            //             console.log("words: ", words);
             let localWords: string[] = [];
             let pkgWords: Map<string, string[]> = new Map();
             words.forEach((word) => {
@@ -330,53 +368,85 @@ export class SymbolInfo {
                 checkedPkgWords.push(...this.checkWordEqSymbolByPkgNameAndWords(pkgName, words).map((symbolName) => `${pkgName}.${symbolName}`));
             });
 
-            let checkedWords = checkedLocalWords.concat(checkedPkgWords);
+            checkedWords = checkedLocalWords.concat(checkedPkgWords);
+
+            let gqWords = ["@gq", "@gq-column", "@gq-sub", "@gq-group", "@gq-clause", "@gq-op", "@gq-struct",
+                "@kit-http", "@kit-http-request", "@kit-http-service",
+                "@tags", "@basePath", "@otel",
+            ];
+            checkedWords.push(...gqWords);
 
             if (!checkedWords.length) {
                 return;
             }
+        }
 
-            // console.log("checkedWords", checkedWords);
+        ////  console.log("checkedWords", checkedWords);
 
-            const lineRegex = new RegExp(`\\/\\/ .*`, 'g');
+        const lineRegex = new RegExp(`\\/\\/ .*`, 'g');
 
-            const wordRegex = new RegExp(`\\b(${checkedWords.join("|")})\\b`, 'g');
+        // const wordRegex = new RegExp(`\\b(${checkedWords.join("|")})\\b`, 'g');
+        const wordRegex = new RegExp(`(?<=^|\\s|\\t)(${checkedWords.join("|")})(?=$|\\s|\\t)`, 'g');
+        const fieldRegex = new RegExp(`(?<=^|\\s|\\t)(\\w+)(?=$|\\s|\\t)`, 'g');
 
-
-            let decorations: vscode.DecorationOptions[] = [];
-            let lineMatch;
-            // console.log("wordRegex: ", `\\b(${checkedWords.join("|")})\\b`);
-            while (lineMatch = lineRegex.exec(text)) {
+        let lineMatch;
+        ////  console.log("wordRegex: ", `\\b(${checkedWords.join("|")})\\b`);
+        while (lineMatch = lineRegex.exec(text)) {
+            if (lineMatch[0].includes('@gq-column') || lineMatch[0].includes('@gq-sub') || lineMatch[0].includes('@gq-struct')) {
                 let wordMatch;
-                let index = 0;
-                while (wordMatch = wordRegex.exec(lineMatch[0])) {
-                    index += 1;
-                    // console.log("wordMatch", index, wordMatch, lineMatch[0], lineMatch);
-                    // let start = lineMatch.index + lineMatch[0].indexOf(wordMatch[1]);
+                //                 console.log("highlight range lineMatch", lineMatch);
+                while (wordMatch = fieldRegex.exec(lineMatch[0])) {
                     let start = lineMatch.index + wordMatch.index;
                     let end = start + wordMatch[1].length;
 
+                    let wordMatchStr = wordMatch[1] as string;
+                    //                     console.log("highlight range match", wordMatch[1]);
 
-                    decorations.push({
-                        range: new vscode.Range(doc.positionAt(start), doc.positionAt(end)),
-                        // hoverMessage: 'I am a hover!'
-                    });
+                    let targetSymbol = this.findGqColumnTargetSymbol(doc, doc.positionAt(start));
+                    //                     console.log("highlight targetSymbol", targetSymbol);
+                    if (targetSymbol.uri && targetSymbol.symbol) {
+                        let targetDocument = await vscode.workspace.openTextDocument(targetSymbol.uri);
+                        targetSymbol.symbol.children.forEach((child) => {
+                            let tags = targetDocument.getText(child.range);
+                            if (tags.includes('gorm:"column:' + wordMatchStr)) {
+                                decorations.push({
+                                    range: new vscode.Range(doc.positionAt(start), doc.positionAt(end)),
+                                });
+                            }
+                        });
+                    }
                 };
-                wordRegex.lastIndex = 0;
-            };
-
-            const hoverDecorationType = vscode.window.createTextEditorDecorationType({
-                color: this.noteHighBrightColor,
-            });
-
-            if (this.DecorationsMap.has(uri)) {
-                this.DecorationsMap.get(uri)?.dispose();
+                fieldRegex.lastIndex = 0;
             }
 
-            this.DecorationsMap.set(uri, hoverDecorationType);
-            editor.setDecorations(hoverDecorationType, decorations);
-            console.log("结束 highlightComments");
+            let wordMatch;
+            while (wordMatch = wordRegex.exec(lineMatch[0])) {
+                ////  console.log("wordMatch", index, wordMatch, lineMatch[0], lineMatch);
+                // let start = lineMatch.index + lineMatch[0].indexOf(wordMatch[1]);
+                let start = lineMatch.index + wordMatch.index;
+                let end = start + wordMatch[1].length;
+
+
+
+                decorations.push({
+                    range: new vscode.Range(doc.positionAt(start), doc.positionAt(end)),
+                    // hoverMessage: 'I am a hover!'
+                });
+            };
+            wordRegex.lastIndex = 0;
+        };
+
+        const hoverDecorationType = vscode.window.createTextEditorDecorationType({
+            color: this.noteHighBrightColor,
+        });
+
+        if (this.DecorationsMap.has(uri.toString())) {
+            this.DecorationsMap.get(uri.toString())?.dispose();
         }
+
+        this.DecorationsMap.set(uri.toString(), hoverDecorationType);
+        editor.setDecorations(hoverDecorationType, decorations);
+        //         console.log("结束 highlightComments");
     }
 
     async watch(context: vscode.ExtensionContext) {
@@ -393,7 +463,7 @@ export class SymbolInfo {
             if (uri.fsPath.includes('_test.go')) {
                 return;
             }
-            console.log("onDidChange", uri.fsPath);
+            //             console.log("onDidChange", uri.fsPath);
             this.debounceSetSymbol(uri);
         });
 
@@ -412,7 +482,7 @@ export class SymbolInfo {
         //     this.debounceHighlightComments(vscode.window.activeTextEditor);
         // }, null, context.subscriptions);
         vscode.workspace.onDidChangeTextDocument((e) => {
-            console.log("onDidChangeTextDocument", e.document.uri.fsPath);
+            //             console.log("onDidChangeTextDocument", e.document.uri.fsPath);
             this.debounceSetSymbol(e.document.uri);
         });
 
@@ -428,6 +498,118 @@ export class SymbolInfo {
         context.subscriptions.push(watcher);
     }
 
+    jumpToInterface(context: vscode.ExtensionContext) {
+        let that = this;
+        let disposable = vscode.commands.registerCommand('mytest.jumpToInterface', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor) {
+                //                 console.log("uris", that.getEqDirUrisByUri(editor.document.uri));
+
+                let items = that.getEqDirUrisByUri(editor.document.uri).map((uri) => {
+                    return that.symbolsMap.get(uri.toString())?.Symbol.map((symbol) => {
+                        return { symbol: symbol, uri: uri };
+                    }).filter((info) => {
+                        if (info.symbol.kind === vscode.SymbolKind.Interface) {
+                            //                             console.log("info", info);
+                            return true;
+                        }
+                    });
+                }).flat();
+
+
+                let pickItems = items.filter((item) => {
+                    return item !== undefined;
+                }).map((item) => {
+                    return {
+                        label: item?.symbol.name || '',
+                        description: item?.symbol.detail || '',
+                        detail: '',
+                        info: item
+                    };
+                });
+                //                 console.log("pickItems", pickItems);
+
+
+                if (pickItems) {
+                    vscode.window.showQuickPick(pickItems).then(item => {
+                        if (item?.info) {
+                            vscode.workspace.openTextDocument(item.info.uri).then((doc) => {
+                                vscode.window.showTextDocument(doc).then((editor) => {
+                                    if (item.info?.symbol.range) {
+                                        editor.revealRange(item.info.symbol.range);
+                                    }
+                                });
+                            });
+                        };
+                    });
+                }
+            }
+        });
+
+        context.subscriptions.push(disposable);
+    }
+
+    async findGqColumn(document: vscode.TextDocument, position: vscode.Position, column: string): Promise<vscode.Location | undefined> {
+        let targetSymbol = this.findGqColumnTargetSymbol(document, position);
+        if (!(targetSymbol.uri && targetSymbol.symbol)) {
+            return undefined;
+        }
+
+        //         console.log("findGqColumn", targetSymbol.uri, targetSymbol.symbol);
+
+
+        let targetDocument = await vscode.workspace.openTextDocument(targetSymbol.uri);
+        for (let v of targetSymbol.symbol.children) {
+            let tags = targetDocument.getText(v.range);
+            if (tags.includes('gorm:"column:')) {
+                let match = tags.match(/gorm:"column:([^;]+);/);
+                //                 console.log("column", column, "match", match);
+                if (match && match[1] === column) {
+                    return new vscode.Location(targetSymbol.uri, v.range);
+                }
+            }
+        }
+
+        return undefined;
+    }
+
+    findGqColumnTargetSymbol(document: vscode.TextDocument, position: vscode.Position): { uri: vscode.Uri | undefined; symbol: vscode.DocumentSymbol | undefined } {
+        let currentLine = position.line;
+        let gqDoc = "";
+        while (currentLine >= 0) {
+            currentLine--;
+            const line = document.lineAt(currentLine);
+            const text = line.text.trim();
+            //             console.log("text", text);
+
+            if (text.startsWith('// @gq ')) {
+                gqDoc = text.slice('// @gq '.length);
+                break;
+            }
+        }
+
+        //         console.log("gqDoc", gqDoc);
+
+        if (!gqDoc) {
+            return { uri: undefined, symbol: undefined };
+        }
+
+        let pkgName = "";
+        let symbolName = "";
+        if (gqDoc.includes('.')) {
+            let gqDocSplit = gqDoc.split('.');
+            pkgName = gqDocSplit[0];
+            symbolName = gqDocSplit[1];
+        } else {
+            pkgName = this.symbolsMap.get(document.uri.toString())?.PackageName || '';
+            symbolName = gqDoc;
+        }
+
+        //         console.log("pkgName", pkgName, symbolName);
+
+        return this.getSymbolByPkgNameAndName(pkgName, symbolName);
+    }
+
     gqAutomaticComplement(context: vscode.ExtensionContext) {
         let that = this;
         context.subscriptions.push(
@@ -439,46 +621,11 @@ export class SymbolInfo {
                             if (!fileInfo) {
                                 return undefined;
                             }
-                            let symbols = fileInfo.Symbol;
-                            let symbol = symbols.find((symbol) => {
-                                return symbol.range.contains(position);
-                            });
-                            if (!symbol) {
-                                return undefined;
-                            }
-                            let startLine = symbol.range.start.line;
-                            let gqDoc = "";
-                            while (startLine >= 0) {
-                                startLine--;
-                                const line = document.lineAt(startLine);
-                                const text = line.text.trim();
-
-                                if (text.startsWith('// ')) {
-                                    if (text.startsWith('// @gq ')) {
-                                        gqDoc = text.slice('// @gq '.length);
-                                    }
-                                } else {
-                                    break;
-                                }
-                            }
-                            if (!gqDoc) {
-                                return undefined;
-                            }
-                            let pkgName = "";
-                            let symbolName = "";
-                            if (gqDoc.includes('.')) {
-                                let gqDocSplit = gqDoc.split('.');
-                                pkgName = gqDocSplit[0];
-                                symbolName = gqDocSplit[1];
-                            } else {
-                                pkgName = fileInfo.PackageName;
-                                symbolName = gqDoc;
-                            }
-
-                            let targetSymbol = that.getSymbolByPkgNameAndName(pkgName, symbolName);
+                            let targetSymbol = that.findGqColumnTargetSymbol(document, position);
                             if (!(targetSymbol.uri && targetSymbol.symbol)) {
                                 return undefined;
                             }
+
 
 
                             let targetDocument = await vscode.workspace.openTextDocument(targetSymbol.uri);
@@ -489,7 +636,10 @@ export class SymbolInfo {
                                 if (tags.includes('gorm:"column:')) {
                                     let match = tags.match(/gorm:"column:([^;]+);/);
                                     if (match && match[1]) {
-                                        items.push(new vscode.CompletionItem(match[1], vscode.CompletionItemKind.Field));
+                                        let item = new vscode.CompletionItem(match[1], vscode.CompletionItemKind.Field);
+                                        let doc = tags.match(/comment:'([^;]+)'/);
+                                        item.detail = (doc ? doc[1] : '');
+                                        items.push(item);
                                     }
                                 }
                             });
@@ -498,7 +648,7 @@ export class SymbolInfo {
                         });
                     }
                 },
-                "// @gq-column ",
+                ...["// @gq-column ", "// @gq-sub ", "// gq-struct "],
             ));
     }
 }

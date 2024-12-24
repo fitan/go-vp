@@ -2,7 +2,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { SymbolInfo } from './watch';
-import { goGenerate } from './command';
+import { goGenerate, jumpToInterface } from './command';
 import { automaticComplement } from './automaticComplement';
 
 // This method is called when your extension is activated
@@ -15,6 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 	let sInfo = new SymbolInfo;
+	sInfo.jumpToInterface(context);
 	console.log('Congratulations, your extension "mytest" is now active!');
 	sInfo.first().then(() => {
 		console.log('first over', vscode.window.activeTextEditor?.document.uri);

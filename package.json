@@ -34,6 +34,10 @@
       {
         "command": "mytest.goGenerate",
         "title": "run go generate"
+      },
+      {
+        "command": "mytest.jumpToInterface",
+        "title": "jump to interface"
       }
     ],
     "keybindings": [
@@ -41,6 +45,12 @@
         "command": "mytest.goGenerate",
         "key": "ctrl+alt+g",
         "mac": "cmd+alt+g",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "mytest.jumpToInterface",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i",
         "when": "editorTextFocus"
       }
     ]
